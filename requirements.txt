@@ -1,0 +1,9 @@
+Flask==3.0.0
+flask-cors==4.0.0
+yt-dlp
+
+# Add gunicorn to requirements.txt
+echo "gunicorn" >> requirements.txt
+
+# Update app_with_cookies.py (bottom):
+# Change the last if __name__ == '__main__': block to:

@@ -128,6 +128,9 @@ def health():
     return jsonify({'status': 'ok', 'cookies': cookies_status})
 
 if __name__ == '__main__':
+    import os
+    port = int(os.environ.get('PORT', 5000))
+    app.run(debug=False, host='0.0.0.0', port=port)
     print("="*70)
     print("🚀 Instagram Downloader")
     print("="*70)
