@@ -22,11 +22,6 @@ from io import BytesIO
 import requests
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-try:
-    import psycopg2
-except Exception:
-    psycopg2 = None
-
 app = Flask(__name__)
 CORS(app)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
@@ -41,9 +36,8 @@ youtube_jobs = {}
 youtube_jobs_lock = threading.Lock()
 YOUTUBE_JOB_TTL_SECONDS = 30 * 60
 ANALYTICS_DB_PATH = os.path.join(os.getcwd(), 'analytics.db')
-DATABASE_URL = os.environ.get('DATABASE_URL', '').strip()
 ADMIN_USERNAME = os.environ.get('ADMIN_USERNAME', 'Hkrsec')
-ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', 'Hkr@sumit1')
+ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', 'Hkr@ankit1')
 MAX_DOWNLOAD_WORKERS = max(2, int(os.environ.get('MAX_DOWNLOAD_WORKERS', '4')))
 DOWNLOAD_TIMEOUT_SECONDS = int(os.environ.get('DOWNLOAD_TIMEOUT_SECONDS', '480'))
 MAX_QUEUED_JOBS = max(10, int(os.environ.get('MAX_QUEUED_JOBS', '200')))
@@ -52,60 +46,30 @@ logger = logging.getLogger('video_downloader')
 
 
 def _db_connect():
-    if DATABASE_URL:
-        if psycopg2 is None:
-            raise RuntimeError("DATABASE_URL is set but psycopg2 is not installed")
-        db_url = DATABASE_URL
-        if db_url.startswith('postgres://'):
-            db_url = db_url.replace('postgres://', 'postgresql://', 1)
-        return psycopg2.connect(db_url), 'postgres'
     conn = sqlite3.connect(ANALYTICS_DB_PATH)
     conn.row_factory = sqlite3.Row
-    return conn, 'sqlite'
-
-
-def _db_sql(sql, driver):
-    if driver == 'postgres':
-        return sql.replace('?', '%s')
-    return sql
+    return conn
 
 
 def _init_db():
-    conn, driver = _db_connect()
+    conn = _db_connect()
     try:
         cur = conn.cursor()
-        if driver == 'postgres':
-            cur.execute(
-                '''
-                CREATE TABLE IF NOT EXISTS request_logs (
-                    id BIGSERIAL PRIMARY KEY,
-                    ts BIGINT NOT NULL,
-                    method TEXT NOT NULL,
-                    path TEXT NOT NULL,
-                    endpoint TEXT,
-                    ip TEXT,
-                    ua TEXT,
-                    status INTEGER NOT NULL,
-                    latency_ms INTEGER NOT NULL
-                )
-                '''
+        cur.execute(
+            '''
+            CREATE TABLE IF NOT EXISTS request_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts INTEGER NOT NULL,
+                method TEXT NOT NULL,
+                path TEXT NOT NULL,
+                endpoint TEXT,
+                ip TEXT,
+                ua TEXT,
+                status INTEGER NOT NULL,
+                latency_ms INTEGER NOT NULL
             )
-        else:
-            cur.execute(
-                '''
-                CREATE TABLE IF NOT EXISTS request_logs (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    ts INTEGER NOT NULL,
-                    method TEXT NOT NULL,
-                    path TEXT NOT NULL,
-                    endpoint TEXT,
-                    ip TEXT,
-                    ua TEXT,
-                    status INTEGER NOT NULL,
-                    latency_ms INTEGER NOT NULL
-                )
-                '''
-            )
+            '''
+        )
         cur.execute('CREATE INDEX IF NOT EXISTS idx_request_logs_ts ON request_logs(ts)')
         cur.execute('CREATE INDEX IF NOT EXISTS idx_request_logs_path ON request_logs(path)')
         cur.execute('CREATE INDEX IF NOT EXISTS idx_request_logs_ip ON request_logs(ip)')
@@ -260,16 +224,13 @@ def log_request_end(response):
             return response
 
         duration_ms = int((time.time() - getattr(g, 'req_start', time.time())) * 1000)
-        conn, driver = _db_connect()
+        conn = _db_connect()
         cur = conn.cursor()
         cur.execute(
-            _db_sql(
-                '''
+            '''
             INSERT INTO request_logs (ts, method, path, endpoint, ip, ua, status, latency_ms)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ''',
-                driver,
-            ),
             (
                 int(time.time()),
                 request.method,
@@ -933,18 +894,17 @@ def admin_stats():
           AND path <> '/admin'
     '''
     params = (start_ts, end_ts)
-    conn, driver = _db_connect()
+    conn = _db_connect()
     cur = conn.cursor()
     try:
-        cur.execute(_db_sql(f'SELECT COUNT(*) FROM request_logs {base_where}', driver), params)
+        cur.execute(f'SELECT COUNT(*) FROM request_logs {base_where}', params)
         total_hits = cur.fetchone()[0]
 
-        cur.execute(_db_sql(f'SELECT COUNT(DISTINCT ip) FROM request_logs {base_where}', driver), params)
+        cur.execute(f'SELECT COUNT(DISTINCT ip) FROM request_logs {base_where}', params)
         unique_visitors = cur.fetchone()[0]
 
         cur.execute(
-            _db_sql(
-                f'''
+            f'''
             SELECT path, COUNT(*) AS count
             FROM request_logs
             {base_where}
@@ -952,15 +912,12 @@ def admin_stats():
             ORDER BY count DESC
             LIMIT 10
             ''',
-                driver,
-            ),
             params,
         )
         top_paths = [{'path': row[0], 'count': row[1]} for row in cur.fetchall()]
 
         cur.execute(
-            _db_sql(
-                f'''
+            f'''
             SELECT
               SUM(CASE WHEN path = '/' THEN 1 ELSE 0 END) AS home_hits,
               SUM(CASE WHEN path LIKE '/api/download/instagram%' THEN 1 ELSE 0 END) AS instagram_hits,
@@ -969,8 +926,6 @@ def admin_stats():
             FROM request_logs
             {base_where}
             ''',
-                driver,
-            ),
             params,
         )
         row = cur.fetchone()
@@ -982,16 +937,13 @@ def admin_stats():
         }
 
         cur.execute(
-            _db_sql(
-                f'''
+            f'''
             SELECT ts, ip, method, path, status, latency_ms
             FROM request_logs
             {base_where}
             ORDER BY id DESC
             LIMIT 40
             ''',
-                driver,
-            ),
             params,
         )
         recent_activity = [
@@ -1008,32 +960,16 @@ def admin_stats():
 
         span = end_ts - start_ts
         bucket = 300 if span <= 2 * 3600 else (3600 if span <= 10 * 24 * 3600 else 86400)
-        if driver == 'postgres':
-            cur.execute(
-                '''
-                SELECT (FLOOR(ts::numeric / %s) * %s)::bigint AS bucket_ts, COUNT(*) AS count
-                FROM request_logs
-                WHERE ts >= %s AND ts <= %s
-                  AND path NOT LIKE '/api/admin/%'
-                  AND path <> '/admin'
-                GROUP BY bucket_ts
-                ORDER BY bucket_ts ASC
-                ''',
-                (bucket, bucket, start_ts, end_ts),
-            )
-        else:
-            cur.execute(
-                '''
-                SELECT ((ts / ?) * ?) AS bucket_ts, COUNT(*) AS count
-                FROM request_logs
-                WHERE ts >= ? AND ts <= ?
-                  AND path NOT LIKE '/api/admin/%'
-                  AND path <> '/admin'
-                GROUP BY bucket_ts
-                ORDER BY bucket_ts ASC
-                ''',
-                (bucket, bucket, start_ts, end_ts),
-            )
+        cur.execute(
+            f'''
+            SELECT ((ts / ?) * ?) AS bucket_ts, COUNT(*) AS count
+            FROM request_logs
+            {base_where}
+            GROUP BY bucket_ts
+            ORDER BY bucket_ts ASC
+            ''',
+            (bucket, bucket, start_ts, end_ts),
+        )
         time_series = [{'ts': row[0], 'count': row[1]} for row in cur.fetchall()]
 
         return jsonify(

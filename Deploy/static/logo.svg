@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Insta downloader logo">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fdfdfd"/>
+      <stop offset="1" stop-color="#c9c9c9"/>
+    </linearGradient>
+  </defs>
+  <rect x="18" y="18" width="220" height="220" rx="52" fill="#0d0d0d" stroke="#f2f2f2" stroke-width="10"/>
+  <circle cx="128" cy="128" r="50" fill="none" stroke="url(#g)" stroke-width="12"/>
+  <circle cx="188" cy="68" r="12" fill="#f2f2f2"/>
+  <path d="M128 86 L128 154" stroke="#ffffff" stroke-width="12" stroke-linecap="round"/>
+  <path d="M104 132 L128 158 L152 132" fill="none" stroke="#ffffff" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

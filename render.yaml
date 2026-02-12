@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: video-downloader
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app_with_cookies:app --workers 2 --worker-class gthread --threads 4 --timeout 240
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: FLASK_SECRET_KEY
+        generateValue: true
+      - key: ADMIN_SESSION_SECONDS
+        value: 43200
+      - key: MAX_DOWNLOAD_WORKERS
+        value: 4
+      - key: MAX_QUEUED_JOBS
+        value: 200
+      - key: DOWNLOAD_TIMEOUT_SECONDS
+        value: 480
+      - key: SESSION_COOKIE_SECURE
+        value: 1
+      - key: DATABASE_URL
+        sync: false
+      - key: ADMIN_USERNAME
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false

@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin Dashboard</title>
+  <link rel="icon" type="image/svg+xml" href="/static/logo.svg">
+  <style>
+    :root {
+      --bg: #0a0a0a;
+      --panel: #121212;
+      --line: #2e2e2e;
+      --text: #f5f5f5;
+      --muted: #b8b8b8;
+      --ok: #56d364;
+      --warn: #f1c40f;
+      --err: #ff7b72;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: "Segoe UI", Arial, sans-serif; background: var(--bg); color: var(--text); }
+    .wrap { max-width: 1080px; margin: 0 auto; padding: 16px; }
+    .bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+    .bar h1 { margin: 0 auto 0 0; font-size: 1.2rem; display: flex; align-items: center; gap: 8px; }
+    .logo { width: 24px; height: 24px; border-radius: 6px; border: 1px solid #444; background: #000; }
+    .bar input, .bar select, .bar button { background: #111; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+    .bar button { cursor: pointer; }
+    .bar button.primary { background: #fff; color: #000; border-color: #fff; font-weight: 700; }
+    .grid { display: grid; gap: 10px; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 12px; }
+    .card { border: 1px solid var(--line); background: var(--panel); border-radius: 10px; padding: 10px; }
+    .card .k { color: var(--muted); font-size: 0.83rem; }
+    .card .v { margin-top: 6px; font-size: 1.2rem; font-weight: 700; }
+    .section { border: 1px solid var(--line); background: var(--panel); border-radius: 10px; padding: 10px; margin-bottom: 10px; }
+    .section h2 { margin: 0 0 10px; font-size: 0.98rem; }
+    .paths li { display: flex; justify-content: space-between; border-bottom: 1px dashed #2a2a2a; padding: 6px 0; font-size: 0.86rem; }
+    .paths { margin: 0; padding-left: 0; list-style: none; }
+    .status { margin-left: 8px; font-size: 0.84rem; color: var(--muted); }
+    .chart { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(8px, 1fr); gap: 3px; align-items: end; height: 120px; }
+    .chart div { background: #fff; opacity: 0.8; border-radius: 3px 3px 0 0; }
+    .split { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+    th, td { border-bottom: 1px solid #252525; padding: 6px; text-align: left; }
+    th { color: var(--muted); font-weight: 600; }
+    .ok { color: var(--ok); }
+    .err { color: var(--err); }
+    .muted { color: var(--muted); }
+    @media (max-width: 900px) {
+      .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .split { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <div class="bar">
+      <h1><img class="logo" src="/static/logo.svg" alt="" />Admin Dashboard</h1>
+      <span id="adminUser" class="status"></span>
+      <select id="range">
+        <option value="15m">Last 15m</option>
+        <option value="1h">Last 1h</option>
+        <option value="6h">Last 6h</option>
+        <option value="24h" selected>Last 24h</option>
+        <option value="7d">Last 7d</option>
+        <option value="30d">Last 30d</option>
+        <option value="custom">Custom</option>
+      </select>
+      <input id="fromTs" type="datetime-local" />
+      <input id="toTs" type="datetime-local" />
+      <button id="refreshBtn" class="primary">Refresh</button>
+      <button id="logoutBtn">Logout</button>
+      <label class="muted"><input id="autoRefresh" type="checkbox" /> auto 30s</label>
+      <span id="status" class="status"></span>
+    </div>
+
+    <div class="grid">
+      <div class="card"><div class="k">Total Hits</div><div id="totalHits" class="v">0</div></div>
+      <div class="card"><div class="k">Unique Visitors</div><div id="uniqueVisitors" class="v">0</div></div>
+      <div class="card"><div class="k">Avg Latency</div><div id="avgLatency" class="v">0 ms</div></div>
+      <div class="card"><div class="k">Range</div><div id="rangeLabel" class="v">24h</div></div>
+    </div>
+
+    <div class="split">
+      <section class="section">
+        <h2>Traffic Timeline</h2>
+        <div id="timeline" class="chart"></div>
+      </section>
+      <section class="section">
+        <h2>Platform Breakdown</h2>
+        <ul id="platformList" class="paths"></ul>
+      </section>
+    </div>
+
+    <div class="split">
+      <section class="section">
+        <h2>Top Paths</h2>
+        <ul id="topPaths" class="paths"></ul>
+      </section>
+      <section class="section">
+        <h2>Recent Activity</h2>
+        <div style="max-height: 320px; overflow: auto;">
+          <table>
+            <thead>
+              <tr><th>Time</th><th>IP</th><th>Method</th><th>Path</th><th>Status</th><th>Latency</th></tr>
+            </thead>
+            <tbody id="recentTable"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    const el = {
+      adminUser: document.getElementById('adminUser'),
+      range: document.getElementById('range'),
+      fromTs: document.getElementById('fromTs'),
+      toTs: document.getElementById('toTs'),
+      refreshBtn: document.getElementById('refreshBtn'),
+      logoutBtn: document.getElementById('logoutBtn'),
+      autoRefresh: document.getElementById('autoRefresh'),
+      status: document.getElementById('status'),
+      totalHits: document.getElementById('totalHits'),
+      uniqueVisitors: document.getElementById('uniqueVisitors'),
+      avgLatency: document.getElementById('avgLatency'),
+      rangeLabel: document.getElementById('rangeLabel'),
+      timeline: document.getElementById('timeline'),
+      platformList: document.getElementById('platformList'),
+      topPaths: document.getElementById('topPaths'),
+      recentTable: document.getElementById('recentTable')
+    };
+
+    let timer = null;
+
+    function setStatus(text, isErr = false) {
+      el.status.textContent = text;
+      el.status.className = `status ${isErr ? 'err' : ''}`;
+    }
+
+    function fmt(ts) {
+      return new Date(ts * 1000).toLocaleString();
+    }
+
+    function renderBars(series) {
+      el.timeline.innerHTML = '';
+      if (!series.length) {
+        el.timeline.innerHTML = '<span class="muted">No data</span>';
+        return;
+      }
+      const maxVal = Math.max(...series.map(x => x.count), 1);
+      for (const point of series) {
+        const d = document.createElement('div');
+        d.style.height = `${Math.max(4, (point.count / maxVal) * 100)}%`;
+        d.title = `${fmt(point.ts)} | ${point.count} hits`;
+        el.timeline.appendChild(d);
+      }
+    }
+
+    function renderList(target, data, mapper) {
+      target.innerHTML = '';
+      if (!data || !data.length) {
+        target.innerHTML = '<li class="muted">No data</li>';
+        return;
+      }
+      for (const row of data) {
+        const li = document.createElement('li');
+        li.innerHTML = mapper(row);
+        target.appendChild(li);
+      }
+    }
+
+    async function ensureSession() {
+      try {
+        const res = await fetch('/api/admin/me');
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+          window.location.href = '/admin/login';
+          return false;
+        }
+        el.adminUser.textContent = `Signed in: ${data.username}`;
+        return true;
+      } catch (err) {
+        window.location.href = '/admin/login';
+        return false;
+      }
+    }
+
+    async function loadStats() {
+      const ok = await ensureSession();
+      if (!ok) {
+        return;
+      }
+
+      const params = new URLSearchParams();
+      const range = el.range.value;
+      params.set('range', range);
+      if (range === 'custom') {
+        if (!el.fromTs.value || !el.toTs.value) {
+          setStatus('Select custom from/to', true);
+          return;
+        }
+        params.set('from', new Date(el.fromTs.value).toISOString());
+        params.set('to', new Date(el.toTs.value).toISOString());
+      }
+
+      setStatus('Loading...');
+      try {
+        const res = await fetch(`/api/admin/stats?${params.toString()}`);
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+          if (res.status === 401) {
+            window.location.href = '/admin/login';
+            return;
+          }
+          throw new Error(data.error || 'Failed to fetch admin stats');
+        }
+
+        el.totalHits.textContent = data.summary.totalHits;
+        el.uniqueVisitors.textContent = data.summary.uniqueVisitors;
+        el.avgLatency.textContent = `${data.summary.avgLatencyMs} ms`;
+        el.rangeLabel.textContent = data.range;
+
+        const breakdown = Object.entries(data.platformBreakdown || {}).map(([name, count]) => ({ name, count }));
+        renderList(el.platformList, breakdown, (row) => `<span>${row.name}</span><strong>${row.count}</strong>`);
+        renderList(el.topPaths, data.topPaths || [], (row) => `<span>${row.path}</span><strong>${row.count}</strong>`);
+
+        el.recentTable.innerHTML = '';
+        for (const item of (data.recentActivity || [])) {
+          const tr = document.createElement('tr');
+          const statusCls = item.status >= 400 ? 'err' : 'ok';
+          tr.innerHTML = `
+            <td>${fmt(item.ts)}</td>
+            <td>${item.ip}</td>
+            <td>${item.method}</td>
+            <td>${item.path}</td>
+            <td class="${statusCls}">${item.status}</td>
+            <td>${item.latencyMs} ms</td>
+          `;
+          el.recentTable.appendChild(tr);
+        }
+
+        renderBars(data.timeSeries || []);
+        setStatus(`Updated at ${new Date().toLocaleTimeString()}`);
+      } catch (err) {
+        setStatus(err.message || 'Error', true);
+      }
+    }
+
+    function resetTimer() {
+      if (timer) clearInterval(timer);
+      timer = null;
+      if (el.autoRefresh.checked) {
+        timer = setInterval(loadStats, 30000);
+      }
+    }
+
+    el.refreshBtn.addEventListener('click', loadStats);
+    el.logoutBtn.addEventListener('click', async () => {
+      try {
+        await fetch('/admin/logout', { method: 'POST' });
+      } finally {
+        window.location.href = '/admin/login';
+      }
+    });
+    el.autoRefresh.addEventListener('change', resetTimer);
+    el.range.addEventListener('change', () => {
+      const custom = el.range.value === 'custom';
+      el.fromTs.disabled = !custom;
+      el.toTs.disabled = !custom;
+    });
+
+    el.fromTs.disabled = true;
+    el.toTs.disabled = true;
+    loadStats();
+  </script>
+</body>
+</html>
