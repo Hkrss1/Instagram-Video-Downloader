@@ -10,6 +10,8 @@ import threading
 import time
 import uuid
 import re
+import base64
+import atexit
 import sqlite3
 import logging
 import secrets
@@ -50,6 +52,65 @@ DOWNLOAD_TIMEOUT_SECONDS = int(os.environ.get('DOWNLOAD_TIMEOUT_SECONDS', '480')
 MAX_QUEUED_JOBS = max(10, int(os.environ.get('MAX_QUEUED_JOBS', '200')))
 youtube_executor = ThreadPoolExecutor(max_workers=MAX_DOWNLOAD_WORKERS, thread_name_prefix='yt-worker')
 logger = logging.getLogger('video_downloader')
+YTDLP_COOKIES_B64 = os.environ.get('YTDLP_COOKIES_B64', '').strip()
+YTDLP_COOKIES_TXT = os.environ.get('YTDLP_COOKIES_TXT', '').strip()
+_YTDLP_COOKIES_PATH = None
+_YTDLP_COOKIES_LOCK = threading.Lock()
+
+
+def _cleanup_ytdlp_cookies_file():
+    global _YTDLP_COOKIES_PATH
+    path = _YTDLP_COOKIES_PATH
+    if path and os.path.exists(path):
+        try:
+            os.remove(path)
+        except Exception:
+            pass
+    _YTDLP_COOKIES_PATH = None
+
+
+def _ensure_ytdlp_cookies_file():
+    global _YTDLP_COOKIES_PATH
+    if _YTDLP_COOKIES_PATH and os.path.exists(_YTDLP_COOKIES_PATH):
+        return _YTDLP_COOKIES_PATH
+
+    with _YTDLP_COOKIES_LOCK:
+        if _YTDLP_COOKIES_PATH and os.path.exists(_YTDLP_COOKIES_PATH):
+            return _YTDLP_COOKIES_PATH
+
+        raw = ''
+        if YTDLP_COOKIES_TXT:
+            raw = YTDLP_COOKIES_TXT
+        elif YTDLP_COOKIES_B64:
+            try:
+                raw = base64.b64decode(YTDLP_COOKIES_B64).decode('utf-8')
+            except Exception as exc:
+                logger.warning("Failed to decode YTDLP_COOKIES_B64: %s", exc)
+                return ''
+        else:
+            return ''
+
+        try:
+            fd, path = tempfile.mkstemp(prefix='yt_cookies_', suffix='.txt')
+            with os.fdopen(fd, 'w', encoding='utf-8', newline='\n') as f:
+                f.write(raw)
+            _YTDLP_COOKIES_PATH = path
+            return _YTDLP_COOKIES_PATH
+        except Exception as exc:
+            logger.warning("Failed to create temporary yt-dlp cookies file: %s", exc)
+            return ''
+
+
+def _youtube_cookies_path():
+    env_path = _ensure_ytdlp_cookies_file()
+    if env_path and os.path.exists(env_path):
+        return env_path
+    if os.path.exists('cookies.txt'):
+        return 'cookies.txt'
+    return ''
+
+
+atexit.register(_cleanup_ytdlp_cookies_file)
 
 
 def _db_connect():
@@ -411,6 +472,9 @@ def _run_json_probe(url, timeout=30, use_cookies=False):
     if use_cookies and os.path.exists('cookies.txt'):
         cmd[3:3] = ['--cookies', 'cookies.txt']
     if 'youtube.com' in url or 'youtu.be' in url:
+        yt_cookies = _youtube_cookies_path()
+        if yt_cookies and '--cookies' not in cmd:
+            cmd[3:3] = ['--cookies', yt_cookies]
         cmd[3:3] = ['--extractor-args', 'youtube:player_client=android,web', '--force-ipv4']
 
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
@@ -475,6 +539,7 @@ def _run_youtube_download_with_progress(job_id, url, quality, output_template):
     percent_re = re.compile(r'(\d+(?:\.\d+)?)%')
 
     for format_str in format_options:
+        yt_cookies = _youtube_cookies_path()
         cmd = [
             sys.executable,
             '-m',
@@ -490,6 +555,8 @@ def _run_youtube_download_with_progress(job_id, url, quality, output_template):
             '--concurrent-fragments', '4',
             url,
         ]
+        if yt_cookies:
+            cmd[3:3] = ['--cookies', yt_cookies]
 
         process = subprocess.Popen(
             cmd,
@@ -687,6 +754,8 @@ def youtube_info():
             message = 'Failed to process YouTube URL'
             if probe_error:
                 message = f'{message}: {probe_error[:220]}'
+            if probe_error and "Sign in to confirm you're not a bot" in probe_error:
+                message += ' | Server admin must configure YTDLP_COOKIES_B64 or YTDLP_COOKIES_TXT.'
             return jsonify({'success': False, 'error': message}), 400
 
         return jsonify({
@@ -819,6 +888,7 @@ def youtube_download():
 
         last_error = ''
         for format_str in format_options:
+            yt_cookies = _youtube_cookies_path()
             cmd = [
                 sys.executable,
                 '-m',
@@ -833,6 +903,8 @@ def youtube_download():
                 '--concurrent-fragments', '4',
                 url,
             ]
+            if yt_cookies:
+                cmd[3:3] = ['--cookies', yt_cookies]
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=DOWNLOAD_TIMEOUT_SECONDS)
             if result.returncode == 0:
                 break

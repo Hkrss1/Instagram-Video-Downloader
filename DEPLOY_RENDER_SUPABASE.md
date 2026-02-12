@@ -27,6 +27,7 @@ In Render service settings, set:
 - `DATABASE_URL` = Supabase Postgres URI
 - `ADMIN_USERNAME` = your admin username
 - `ADMIN_PASSWORD` = strong password
+- `YTDLP_COOKIES_B64` = base64 of your exported YouTube `cookies.txt` (recommended)
 
 Optional tuneables:
 - `MAX_DOWNLOAD_WORKERS=4`
@@ -58,6 +59,24 @@ Use `ADMIN_USERNAME` + `ADMIN_PASSWORD` you configured in Render.
 - Confirm `DATABASE_URL` format is valid Postgres URI.
 - Ensure Supabase project is active.
 - Re-check DB password inside URI.
+
+## 8b) If YouTube shows \"Sign in to confirm you're not a bot\"
+
+Render/shared cloud IPs are often challenged by YouTube. Configure server-side cookies:
+
+1. Export YouTube cookies (`cookies.txt`) from a logged-in browser.
+2. Convert to base64:
+
+```bash
+python -c "import base64; print(base64.b64encode(open('cookies.txt','rb').read()).decode())"
+```
+
+3. Set Render env var:
+- `YTDLP_COOKIES_B64=<that_base64_string>`
+
+4. Redeploy.
+
+Alternative (less recommended): set raw `YTDLP_COOKIES_TXT` with full cookies text.
 
 ## 9) Security checklist
 
