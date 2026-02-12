@@ -15,9 +15,9 @@ COPY passenger_wsgi.py .
 COPY templates/ templates/
 COPY static/ static/
 
-EXPOSE 5000
+EXPOSE 10000
 
 ENV FLASK_APP=app_with_cookies.py
 ENV PYTHONUNBUFFERED=1
 
-CMD ["gunicorn", "--workers", "3", "--worker-class", "gthread", "--threads", "4", "--timeout", "240", "--bind", "0.0.0.0:5000", "app_with_cookies:app"]
+CMD ["sh", "-c", "gunicorn app_with_cookies:app --workers 3 --worker-class gthread --threads 4 --timeout 240 --bind 0.0.0.0:${PORT:-10000}"]

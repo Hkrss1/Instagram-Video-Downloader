@@ -4,7 +4,7 @@ services:
     env: python
     plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app_with_cookies:app --workers 2 --worker-class gthread --threads 4 --timeout 240
+    startCommand: gunicorn app_with_cookies:app --workers 2 --worker-class gthread --threads 4 --timeout 240 --bind 0.0.0.0:$PORT
     autoDeploy: true
     envVars:
       - key: PYTHON_VERSION
