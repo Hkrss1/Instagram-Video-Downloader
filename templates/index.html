@@ -580,6 +580,47 @@
             }
         }
 
+        async function startYoutubeBackgroundDownload(quality) {
+            const startRes = await fetch('/api/youtube/download/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url: state.youtubeUrl, quality })
+            });
+            const startData = await startRes.json();
+            if (!startRes.ok || !startData.success || !startData.jobId) {
+                throw new Error(startData.error || 'Failed to start background download');
+            }
+
+            const jobId = startData.jobId;
+            setYoutubeStatus(true, `Downloading ${quality} in background...`, 5, 'Please keep this tab open');
+
+            state.youtubePollTimer = setInterval(async () => {
+                try {
+                    const statusRes = await fetch(`/api/youtube/download/status/${jobId}`);
+                    const statusData = await statusRes.json();
+                    if (!statusRes.ok || !statusData.success) {
+                        throw new Error(statusData.error || 'Failed to get download status');
+                    }
+
+                    const progress = Number(statusData.progress || 0);
+                    setYoutubeStatus(true, statusData.message || 'Downloading...', progress, '');
+
+                    if (statusData.status === 'ready' && statusData.downloadUrl) {
+                        stopYoutubePolling();
+                        setYoutubeStatus(true, 'Download ready. Starting now...', 100, 'Ready');
+                        window.location.href = statusData.downloadUrl;
+                    } else if (statusData.status === 'error') {
+                        stopYoutubePolling();
+                        throw new Error(statusData.error || 'Background download failed');
+                    }
+                } catch (pollErr) {
+                    stopYoutubePolling();
+                    setYoutubeStatus(true, 'Background download failed', 0, '');
+                    showError('youtube', pollErr.message || 'Background download failed');
+                }
+            }, 1500);
+        }
+
         function isInstagramUrl(value) {
             return /^https?:\/\/(www\.)?instagram\.com\/.+/.test(value);
         }
@@ -783,9 +824,13 @@
                 setYoutubeStatus(true, 'Direct link ready. Starting download...', 100, 'Download is source-to-user');
                 window.location.href = directData.downloadUrl;
             } catch (startErr) {
-                stopYoutubePolling();
-                setYoutubeStatus(true, 'Could not start download', 0, '');
-                showError('youtube', startErr.message || 'Failed to start download');
+                try {
+                    await startYoutubeBackgroundDownload(quality);
+                } catch (bgErr) {
+                    stopYoutubePolling();
+                    setYoutubeStatus(true, 'Could not start download', 0, '');
+                    showError('youtube', bgErr.message || startErr.message || 'Failed to start download');
+                }
             } finally {
                 buttons.forEach((b) => (b.disabled = false));
                 setBusy(button, false);

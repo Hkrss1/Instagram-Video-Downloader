@@ -476,6 +476,8 @@ def _pick_youtube_direct_link(info, quality):
 
     best = None
     best_score = -1
+    overshoot = None
+    overshoot_score = -1
     for f in formats:
         url = f.get('url')
         if not url:
@@ -483,34 +485,58 @@ def _pick_youtube_direct_link(info, quality):
         if f.get('vcodec') == 'none' or f.get('acodec') == 'none':
             continue
         h = int(f.get('height') or 0)
-        if h and h > target_height:
-            continue
         ext = (f.get('ext') or '').lower()
         pref = int(f.get('preference') or 0)
         tbr = int(f.get('tbr') or 0)
-        # Prefer MP4 + highest acceptable quality.
-        score = (100000 if ext == 'mp4' else 0) + (h * 100) + pref + tbr
-        if score > best_score:
-            best = f
-            best_score = score
+        base = (100000 if ext == 'mp4' else 0) + pref + tbr
+        if h and h <= target_height:
+            score = base + (h * 100)
+            if score > best_score:
+                best = f
+                best_score = score
+            continue
+
+        # Keep one best "above target" fallback so we can still provide a direct link.
+        if h:
+            score = base - (h - target_height) * 100
+            if score > overshoot_score:
+                overshoot = f
+                overshoot_score = score
+        elif base > overshoot_score:
+            overshoot = f
+            overshoot_score = base
 
     if best and best.get('url'):
         return best['url'], best.get('ext') or 'mp4'
+    if overshoot and overshoot.get('url'):
+        return overshoot['url'], overshoot.get('ext') or 'mp4'
     fallback = info.get('url')
     if fallback:
         return fallback, info.get('ext') or 'mp4'
     return None, 'mp4'
 
 
-def _run_json_probe(url, timeout=30, use_cookies=False):
-    cmd = [sys.executable, '-m', 'yt_dlp', '--dump-json', '--no-warnings', '--skip-download', '--no-playlist', url]
-    if use_cookies and os.path.exists('cookies.txt'):
-        cmd[3:3] = ['--cookies', 'cookies.txt']
+def _run_json_probe(url, timeout=30, use_cookies=False, youtube_clients='android,web'):
+    cmd = [
+        sys.executable,
+        '-m',
+        'yt_dlp',
+        '--ignore-config',
+        '--dump-json',
+        '--no-warnings',
+        '--skip-download',
+        '--no-playlist',
+        url,
+    ]
+
+    yt_cookies = _youtube_cookies_path()
+    if use_cookies and yt_cookies:
+        cmd[3:3] = ['--cookies', yt_cookies]
+
     if 'youtube.com' in url or 'youtu.be' in url:
-        yt_cookies = _youtube_cookies_path()
-        if yt_cookies and '--cookies' not in cmd:
-            cmd[3:3] = ['--cookies', yt_cookies]
-        cmd[3:3] = ['--extractor-args', 'youtube:player_client=android,web', '--force-ipv4']
+        cmd[3:3] = ['--force-ipv4']
+        if youtube_clients:
+            cmd[3:3] = ['--extractor-args', f'youtube:player_client={youtube_clients}']
 
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     if result.returncode != 0 or not result.stdout.strip():
@@ -519,6 +545,41 @@ def _run_json_probe(url, timeout=30, use_cookies=False):
 
     line = result.stdout.strip().splitlines()[-1]
     return json.loads(line), None
+
+
+def _run_youtube_probe_with_fallbacks(url, timeout=30):
+    yt_cookies = _youtube_cookies_path()
+    attempts = []
+    if yt_cookies:
+        attempts.extend(
+            [
+                (True, 'android,web'),
+                (True, 'web'),
+                (True, ''),
+            ]
+        )
+    attempts.extend(
+        [
+            (False, 'android,web'),
+            (False, 'web'),
+            (False, ''),
+        ]
+    )
+
+    seen = set()
+    last_error = ''
+    for use_cookies, clients in attempts:
+        key = (use_cookies, clients)
+        if key in seen:
+            continue
+        seen.add(key)
+        info, err = _run_json_probe(url, timeout=timeout, use_cookies=use_cookies, youtube_clients=clients)
+        if info:
+            return info, None
+        if err:
+            last_error = err
+
+    return None, last_error or 'yt-dlp probe failed'
 
 
 def _cleanup_youtube_job(job_id):
@@ -579,6 +640,7 @@ def _run_youtube_download_with_progress(job_id, url, quality, output_template):
             sys.executable,
             '-m',
             'yt_dlp',
+            '--ignore-config',
             '-f', format_str,
             '-o', output_template,
             '--newline',
@@ -784,7 +846,7 @@ def youtube_info():
         if not url:
             return jsonify({'success': False, 'error': 'URL is required'}), 400
 
-        info, probe_error = _run_json_probe(url, timeout=25)
+        info, probe_error = _run_youtube_probe_with_fallbacks(url, timeout=25)
         if not info:
             message = 'Failed to process YouTube URL'
             if probe_error:
@@ -815,7 +877,7 @@ def youtube_direct_link():
         if not url:
             return jsonify({'success': False, 'error': 'URL is required'}), 400
 
-        info, probe_error = _run_json_probe(url, timeout=30)
+        info, probe_error = _run_youtube_probe_with_fallbacks(url, timeout=30)
         if not info:
             message = 'Failed to prepare direct YouTube link'
             if probe_error:
@@ -966,6 +1028,7 @@ def youtube_download():
                 sys.executable,
                 '-m',
                 'yt_dlp',
+                '--ignore-config',
                 '-f', format_str,
                 '-o', output_template,
                 '--no-warnings',
