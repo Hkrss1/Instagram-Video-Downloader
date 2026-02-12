@@ -42,8 +42,9 @@ youtube_jobs_lock = threading.Lock()
 YOUTUBE_JOB_TTL_SECONDS = 30 * 60
 ANALYTICS_DB_PATH = os.path.join(os.getcwd(), 'analytics.db')
 DATABASE_URL = os.environ.get('DATABASE_URL', '').strip()
-ADMIN_USERNAME = os.environ.get('ADMIN_USERNAME', 'Hkrsec')
-ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', 'Hkr@sumit1')
+DB_FALLBACK_SQLITE = os.environ.get('DB_FALLBACK_SQLITE', '1') == '1'
+ADMIN_USERNAME = os.environ.get('ADMIN_USERNAME', '')
+ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', '')
 MAX_DOWNLOAD_WORKERS = max(2, int(os.environ.get('MAX_DOWNLOAD_WORKERS', '4')))
 DOWNLOAD_TIMEOUT_SECONDS = int(os.environ.get('DOWNLOAD_TIMEOUT_SECONDS', '480'))
 MAX_QUEUED_JOBS = max(10, int(os.environ.get('MAX_QUEUED_JOBS', '200')))
@@ -58,7 +59,12 @@ def _db_connect():
         db_url = DATABASE_URL
         if db_url.startswith('postgres://'):
             db_url = db_url.replace('postgres://', 'postgresql://', 1)
-        return psycopg2.connect(db_url), 'postgres'
+        try:
+            return psycopg2.connect(db_url), 'postgres'
+        except Exception as exc:
+            if not DB_FALLBACK_SQLITE:
+                raise
+            logger.warning("Postgres unavailable, falling back to SQLite: %s", exc)
     conn = sqlite3.connect(ANALYTICS_DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn, 'sqlite'
