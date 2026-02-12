@@ -52,6 +52,7 @@ DOWNLOAD_TIMEOUT_SECONDS = int(os.environ.get('DOWNLOAD_TIMEOUT_SECONDS', '480')
 MAX_QUEUED_JOBS = max(10, int(os.environ.get('MAX_QUEUED_JOBS', '200')))
 youtube_executor = ThreadPoolExecutor(max_workers=MAX_DOWNLOAD_WORKERS, thread_name_prefix='yt-worker')
 logger = logging.getLogger('video_downloader')
+PRIVACY_MODE = os.environ.get('PRIVACY_MODE', '1') == '1'
 YTDLP_COOKIES_B64 = os.environ.get('YTDLP_COOKIES_B64', '').strip()
 YTDLP_COOKIES_TXT = os.environ.get('YTDLP_COOKIES_TXT', '').strip()
 _YTDLP_COOKIES_PATH = None
@@ -323,6 +324,8 @@ def log_request_start():
 @app.after_request
 def log_request_end(response):
     try:
+        if PRIVACY_MODE:
+            return response
         if request.path.startswith('/static/'):
             return response
 
@@ -465,6 +468,38 @@ def _pick_tiktok_media(info):
     if image_candidates:
         return image_candidates[0], 'image'
     return None, None
+
+
+def _pick_youtube_direct_link(info, quality):
+    target_height = 360 if quality == '360p' else 720
+    formats = info.get('formats') or []
+
+    best = None
+    best_score = -1
+    for f in formats:
+        url = f.get('url')
+        if not url:
+            continue
+        if f.get('vcodec') == 'none' or f.get('acodec') == 'none':
+            continue
+        h = int(f.get('height') or 0)
+        if h and h > target_height:
+            continue
+        ext = (f.get('ext') or '').lower()
+        pref = int(f.get('preference') or 0)
+        tbr = int(f.get('tbr') or 0)
+        # Prefer MP4 + highest acceptable quality.
+        score = (100000 if ext == 'mp4' else 0) + (h * 100) + pref + tbr
+        if score > best_score:
+            best = f
+            best_score = score
+
+    if best and best.get('url'):
+        return best['url'], best.get('ext') or 'mp4'
+    fallback = info.get('url')
+    if fallback:
+        return fallback, info.get('ext') or 'mp4'
+    return None, 'mp4'
 
 
 def _run_json_probe(url, timeout=30, use_cookies=False):
@@ -769,6 +804,44 @@ def youtube_info():
         return jsonify({'success': False, 'error': str(exc)}), 500
 
 
+@app.route('/api/youtube/direct-link', methods=['POST'])
+def youtube_direct_link():
+    try:
+        data = request.get_json(silent=True) or {}
+        url = (data.get('url') or '').strip()
+        quality = (data.get('quality') or '720p').strip().lower()
+        if quality not in {'360p', '720p'}:
+            quality = '720p'
+        if not url:
+            return jsonify({'success': False, 'error': 'URL is required'}), 400
+
+        info, probe_error = _run_json_probe(url, timeout=30)
+        if not info:
+            message = 'Failed to prepare direct YouTube link'
+            if probe_error:
+                message = f'{message}: {probe_error[:220]}'
+            return jsonify({'success': False, 'error': message}), 400
+
+        media_url, ext = _pick_youtube_direct_link(info, quality)
+        if not media_url:
+            return jsonify({'success': False, 'error': 'No suitable downloadable stream found'}), 404
+
+        return jsonify(
+            {
+                'success': True,
+                'downloadUrl': media_url,
+                'quality': quality,
+                'ext': ext,
+                'title': info.get('title', 'YouTube Video'),
+                'direct': True,
+            }
+        )
+    except subprocess.TimeoutExpired:
+        return jsonify({'success': False, 'error': 'YouTube request timed out'}), 408
+    except Exception as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 500
+
+
 @app.route('/api/youtube/download/start', methods=['POST'])
 def youtube_download_start():
     _purge_expired_youtube_jobs()
@@ -1000,6 +1073,8 @@ def download_instagram_file():
 def admin_stats():
     if not _is_admin_authenticated():
         return jsonify({'success': False, 'error': 'Unauthorized'}), 401
+    if PRIVACY_MODE:
+        return jsonify({'success': False, 'error': 'Analytics disabled in privacy mode'}), 403
 
     start_ts, end_ts, selected_range = _parse_time_range(request.args)
     if end_ts <= start_ts:

@@ -767,60 +767,28 @@
             const buttons = [el.yt360, el.yt720];
             buttons.forEach((b) => (b.disabled = true));
             setBusy(button, true, 'Preparing...');
-            setYoutubeStatus(true, `Starting ${quality} background download...`, 2, '');
+            setYoutubeStatus(true, `Preparing ${quality} direct link...`, 20, 'No server-side file storage');
 
             try {
-                const startRes = await fetch('/api/youtube/download/start', {
+                const directRes = await fetch('/api/youtube/direct-link', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ url: state.youtubeUrl, quality })
                 });
-                const startData = await startRes.json();
-                if (!startRes.ok || !startData.success || !startData.jobId) {
-                    throw new Error(startData.error || 'Failed to start download');
+                const directData = await directRes.json();
+                if (!directRes.ok || !directData.success || !directData.downloadUrl) {
+                    throw new Error(directData.error || 'Failed to prepare direct link');
                 }
 
-                const jobId = startData.jobId;
-                state.youtubePollTimer = setInterval(async () => {
-                    try {
-                        const statusRes = await fetch(`/api/youtube/download/status/${encodeURIComponent(jobId)}`);
-                        const statusData = await statusRes.json();
-                        if (!statusRes.ok || !statusData.success) {
-                            throw new Error(statusData.error || 'Failed to read download status');
-                        }
-
-                        const msg = statusData.message || 'Downloading...';
-                        const progress = statusData.progress || 0;
-                        setYoutubeStatus(true, msg, progress, '');
-
-                        if (statusData.status === 'ready' && statusData.downloadUrl) {
-                            stopYoutubePolling();
-                            state.youtubeDownloadUrl = statusData.downloadUrl;
-                            const sizeText = statusData.fileSizeMB ? ` (${statusData.fileSizeMB} MB)` : '';
-                            setYoutubeStatus(true, 'Download ready. Starting browser download...', 100, `File ready${sizeText}`);
-                            window.location.href = state.youtubeDownloadUrl;
-                            buttons.forEach((b) => (b.disabled = false));
-                            setBusy(button, false);
-                        } else if (statusData.status === 'error') {
-                            stopYoutubePolling();
-                            throw new Error(statusData.error || 'Download failed');
-                        }
-                    } catch (pollErr) {
-                        stopYoutubePolling();
-                        setYoutubeStatus(true, 'Download failed', 0, '');
-                        showError('youtube', pollErr.message || 'Download failed');
-                        buttons.forEach((b) => (b.disabled = false));
-                        setBusy(button, false);
-                    }
-                }, 1200);
+                setYoutubeStatus(true, 'Direct link ready. Starting download...', 100, 'Download is source-to-user');
+                window.location.href = directData.downloadUrl;
             } catch (startErr) {
                 stopYoutubePolling();
                 setYoutubeStatus(true, 'Could not start download', 0, '');
                 showError('youtube', startErr.message || 'Failed to start download');
+            } finally {
                 buttons.forEach((b) => (b.disabled = false));
                 setBusy(button, false);
-            } finally {
-                // Completion handling is done in the polling loop.
             }
         }
 

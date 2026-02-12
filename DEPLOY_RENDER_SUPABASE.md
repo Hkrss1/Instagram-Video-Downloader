@@ -33,6 +33,8 @@ Optional tuneables:
 - `MAX_DOWNLOAD_WORKERS=4`
 - `MAX_QUEUED_JOBS=200`
 - `DOWNLOAD_TIMEOUT_SECONDS=480`
+- `PRIVACY_MODE=1` (disables request analytics storage)
+- `DB_FALLBACK_SQLITE=1` (keep app live if Postgres is temporarily unavailable)
 
 `FLASK_SECRET_KEY` is generated automatically from `render.yaml`.
 
@@ -77,6 +79,16 @@ python -c "import base64; print(base64.b64encode(open('cookies.txt','rb').read()
 4. Redeploy.
 
 Alternative (less recommended): set raw `YTDLP_COOKIES_TXT` with full cookies text.
+
+## 8c) High-hit privacy mode (no user data storage)
+
+This app supports a privacy-first mode:
+
+- `PRIVACY_MODE=1`
+  - request logs are not persisted (no IP/UA analytics writes)
+- YouTube uses direct-link delivery endpoint (`/api/youtube/direct-link`)
+  - media traffic is source -> user, not stored as a server-side file
+- Existing background YouTube pipeline remains available in code as fallback path
 
 ## 9) Security checklist
 
