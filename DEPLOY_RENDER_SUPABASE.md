@@ -64,3 +64,23 @@ Use `ADMIN_USERNAME` + `ADMIN_PASSWORD` you configured in Render.
 - Do not hardcode admin credentials in source.
 - Keep `ADMIN_PASSWORD` strong.
 - Keep `FLASK_SECRET_KEY` private.
+
+## 10) One-click migration from `analytics.db` to Supabase Postgres
+
+If you already have local analytics data, run this once locally:
+
+```bash
+python migrate_analytics_to_postgres.py --database-url "YOUR_SUPABASE_DATABASE_URL"
+```
+
+Or with env var:
+
+```bash
+set DATABASE_URL=YOUR_SUPABASE_DATABASE_URL
+python migrate_analytics_to_postgres.py
+```
+
+Notes:
+- Script is idempotent (`ON CONFLICT (id) DO NOTHING`), so re-running is safe.
+- It also updates Postgres sequence after insert.
+- Default SQLite source file is `analytics.db`.
